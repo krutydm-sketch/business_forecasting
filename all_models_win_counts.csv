@@ -1,0 +1,11 @@
+model,BIAS,MAE,MAPE,RMSE
+AutoARIMA,1,0,2,1
+AutoETS,2,1,1,1
+Chronos,3,9,6,9
+LastMonth,3,0,0,0
+LastWeek,2,0,0,0
+LastYear,1,0,0,0
+LightGBM,0,2,2,2
+NBEATS,2,1,0,1
+NHITS,1,1,4,1
+Naive,2,3,2,2
