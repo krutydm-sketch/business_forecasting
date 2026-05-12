@@ -1,0 +1,206 @@
+{
+ "nbformat": 4,
+ "nbformat_minor": 0,
+ "metadata": {
+  "colab": {
+   "provenance": [],
+   "gpuType": "T4"
+  },
+  "kernelspec": {
+   "name": "python3",
+   "display_name": "Python 3"
+  },
+  "language_info": {
+   "name": "python"
+  },
+  "accelerator": "GPU"
+ },
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "5Mt8L0CE33XJ",
+    "outputId": "24ec69d2-5b3f-4b38-a50e-4825c1bdfd40"
+   },
+   "outputs": [],
+   "source": [
+    "!pip install mlforecast utilsforecast coreforecast holidays lightgbm tabpfn"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "import os\n",
+    "import holidays\n",
+    "import pandas as pd\n",
+    "from sklearn.linear_model import Lasso\n",
+    "from sklearn.neighbors import KNeighborsRegressor\n",
+    "from sklearn.ensemble import RandomForestRegressor\n",
+    "from lightgbm import LGBMRegressor\n",
+    "from mlforecast import MLForecast\n",
+    "from mlforecast.lag_transforms import RollingMean\n",
+    "from tabpfn import TabPFNRegressor\n",
+    "from utilsforecast.evaluation import evaluate\n",
+    "from utilsforecast.losses import bias, mae, rmse, mape"
+   ],
+   "metadata": {
+    "id": "G4R6grMf4BeZ"
+   },
+   "execution_count": null,
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "us_holidays = holidays.US(years=range(2021, 2024))\n",
+    "\n",
+    "df_tab = (\n",
+    "    pd.read_parquet(\"sample_hotels-1.parquet\")\n",
+    "    .query(\"unique_id not in ['hotel_77', 'hotel_28']\")\n",
+    "    .drop(columns=[\"target_month\", \"target_year\", \"location_type\"])\n",
+    "    .assign(\n",
+    "        ds=lambda x: pd.to_datetime(x[\"ds\"]),\n",
+    "        unique_id=lambda x: x[\"unique_id\"].astype(str),\n",
+    "        y=lambda x: x[\"y\"].astype(float),\n",
+    "\n",
+    "        hotel_type=lambda x: x[\"hotel_type\"].astype(\"category\"),\n",
+    "\n",
+    "        holiday_name=lambda x: (\n",
+    "            x[\"ds\"].dt.date.apply(lambda d: us_holidays.get(d))\n",
+    "            .astype(\"category\")\n",
+    "            .cat.add_categories(\"None\")\n",
+    "            .fillna(\"None\")\n",
+    "        ),\n",
+    "\n",
+    "        day_of_week=lambda x: x[\"ds\"].dt.day_name().astype(\"category\")\n",
+    "    )\n",
+    "    .drop(columns=[\"holiday_flag\", \"target_day\"])\n",
+    ")\n",
+    "\n",
+    "df_tab = pd.get_dummies(\n",
+    "    df_tab,\n",
+    "    columns=[\"day_of_week\", \"holiday_name\", \"hotel_type\"],\n",
+    "    drop_first=True,\n",
+    "    )\n",
+    "\n",
+    "df_tab.info()"
+   ],
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "Qik5d-7Y4vF3",
+    "outputId": "9d1dde95-1569-44e5-b18d-8287e08d698f"
+   },
+   "execution_count": null,
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "import torch\n",
+    "print(f\"Is CUDA available? {torch.cuda.is_available()}\")\n",
+    "print(f\"Device Name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'}\")"
+   ],
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "dVQDuTxf6lRs",
+    "outputId": "12d9de92-8fe2-4782-e714-3960dde3d65f"
+   },
+   "execution_count": null,
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "os.environ[\"TABPFN_TOKEN\"] = \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiZjc4Y2ExYWEtMjExYi00MmEwLTgzNTgtM2QyZWNiOTM2MmUxIiwiZXhwIjoxODA5NjI0MTY0fQ.tQb5B62boZOGWTbERPiiAKR63vjK7HmA6HsTOzZagW8\"\n",
+    "ml_models = {\n",
+    "    \"TabPFN\": TabPFNRegressor(device='cuda')\n",
+    "}\n",
+    "\n",
+    "ml = MLForecast(\n",
+    "    models=ml_models,\n",
+    "    freq=\"D\",\n",
+    "    lags=list(range(28, 57)) + [60, 90, 365],\n",
+    "    lag_transforms={\n",
+    "        28: [\n",
+    "            RollingMean(window_size=7),\n",
+    "            RollingMean(window_size=14),\n",
+    "        ]\n",
+    "    },\n",
+    "    date_features=[\"year\", \"month\"],\n",
+    ")\n",
+    "\n",
+    "cross_ml = ml.cross_validation(\n",
+    "    df=df_tab,\n",
+    "    n_windows=6,\n",
+    "    h=28,\n",
+    "    step_size=28,\n",
+    "    static_features=[],\n",
+    ")\n",
+    "\n"
+   ],
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/",
+     "height": 205
+    },
+    "id": "ePNiYCJI4xU5",
+    "outputId": "e385ce7e-fe79-4513-fd29-d2f6dbcd96df"
+   },
+   "execution_count": null,
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "eval_ml = evaluate(\n",
+    "    df= cross_ml,\n",
+    "    metrics= [bias, mae, rmse, mape],\n",
+    "    models=[\"TabPFN\"],\n",
+    "    target_col='y'\n",
+    ")\n",
+    "\n",
+    "eval_summary = eval_ml.drop(columns=['cutoff']).groupby(['unique_id','metric']).mean().reset_index(inplace=False)\n",
+    "print(eval_summary)\n"
+   ],
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "WU3rEhHi41FE",
+    "outputId": "d432d1ca-e561-4f01-d469-b9bb9d362062"
+   },
+   "execution_count": null,
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "eval_final_summary = (\n",
+    "    eval_summary\n",
+    "    .drop(columns='unique_id')\n",
+    "    .groupby('metric')\n",
+    "    .mean()\n",
+    "    .reset_index()\n",
+    ")\n",
+    "print(eval_final_summary)"
+   ],
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "WBX6_zr78vpj",
+    "outputId": "e28010c1-6981-4b07-c5fd-a2e6bfcd8bef"
+   },
+   "execution_count": null,
+   "outputs": []
+  }
+ ]
+}
